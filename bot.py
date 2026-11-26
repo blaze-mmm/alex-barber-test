@@ -20,8 +20,8 @@ WORK_HOURS = [
 
 SERVICES = {
     "haircut": ("Мужская стрижка", "1000 ₽"),
-    "beard": ("Оформление бороды", "6767 ₽"),
-    "complex": ("Комплекс (Стрижка + Борода)", "пись пись ₽")
+    "beard": ("Оформление бороды", "хуй знает"),
+    "complex": ("Комплекс (Стрижка + Борода)", "хуй знает")
 }
 
 bot = Bot(token=TOKEN)
@@ -35,6 +35,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS bookings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
+            username TEXT,
             client_name TEXT,
             phone TEXT,
             service TEXT,
@@ -42,6 +43,10 @@ def init_db():
             time TEXT
         )
     """)
+    try:
+        cur.execute("ALTER TABLE bookings ADD COLUMN username TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -49,16 +54,16 @@ def get_booked_times(date_str):
     conn = sqlite3.connect("barber.db")
     cur = conn.cursor()
     cur.execute("SELECT time FROM bookings WHERE date = ?", (date_str,))
-    booked = [row[0] for row in cur.fetchall()]
+    booked = [row for row in cur.fetchall()]
     conn.close()
     return booked
 
-def add_booking(user_id, name, phone, service, date_str, time_str):
+def add_booking(user_id, username, name, phone, service, date_str, time_str):
     conn = sqlite3.connect("barber.db")
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO bookings (user_id, client_name, phone, service, date, time) VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, name, phone, service, date_str, time_str)
+        "INSERT INTO bookings (user_id, username, client_name, phone, service, date, time) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, username, name, phone, service, date_str, time_str)
     )
     conn.commit()
     conn.close()
@@ -97,7 +102,7 @@ async def show_price(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "contacts")
 async def show_contacts(callback: types.CallbackQuery):
     await callback.message.edit_text(
-        "📍 **Адрес:** ул. сися, д. 1\n📞 **Телефон:** +7 (999) 123-67-67",
+        "📍 **Адрес:** Оляга Сити, улица Сиси\n📞 **Телефон:** +79996666767",
         reply_markup=main_menu(),
         parse_mode="Markdown"
     )
@@ -137,7 +142,7 @@ async def book_time(callback: types.CallbackQuery, state: FSMContext):
     date_str = callback.data.split("_")[1]
     await state.update_data(date=date_str)
     
-    booked = get_booked_times(date_str)
+    booked = [b[0] for b in get_booked_times(date_str)]
     free_times = [t for t in WORK_HOURS if t not in booked]
     
     if not free_times:
@@ -181,9 +186,10 @@ async def book_phone(message: types.Message, state: FSMContext):
 @dp.message(BookingState.entering_phone)
 async def book_finish(message: types.Message, state: FSMContext):
     phone = message.contact.phone_number if message.contact else message.text
+    username = f"@{message.from_user.username}" if message.from_user.username else "нет юзернейма"
     data = await state.get_data()
     
-    add_booking(message.from_user.id, data['name'], phone, data['service'], data['date'], data['time'])
+    add_booking(message.from_user.id, username, data['name'], phone, data['service'], data['date'], data['time'])
     
     await message.answer(
         f"✅ **Ты успешно записан!**\n\n"
@@ -199,7 +205,7 @@ async def book_finish(message: types.Message, state: FSMContext):
         await bot.send_message(
             BARBER_ID,
             f"🔔 **Новая запись!**\n\n"
-            f"👤 Клиент: {data['name']}\n"
+            f"👤 Клиент: {data['name']} ({username})\n"
             f"📞 Телефон: {phone}\n"
             f"✂️ Услуга: {data['service']}\n"
             f"📅 Дата и время: {data['date']} в {data['time']}",
@@ -214,7 +220,7 @@ async def admin_panel(message: types.Message):
         return
     conn = sqlite3.connect("barber.db")
     cur = conn.cursor()
-    cur.execute("SELECT date, time, client_name, phone, service FROM bookings ORDER BY date, time")
+    cur.execute("SELECT date, time, client_name, username, phone, service FROM bookings ORDER BY date, time")
     rows = cur.fetchall()
     conn.close()
     
@@ -224,7 +230,8 @@ async def admin_panel(message: types.Message):
         
     text = "📋 **Список всех записей:**\n\n"
     for r in rows:
-        text += f"• {r[0]} в {r[1]} — {r[2]} ({r[3]}) | {r[4]}\n"
+        uname = r[3] if r[3] else "нет юзернейма"
+        text += f"• {r[0]} в {r[1]} — {r[2]} ({uname}, {r[4]}) | {r[5]}\n"
     await message.answer(text, parse_mode="Markdown")
 
 async def main():
